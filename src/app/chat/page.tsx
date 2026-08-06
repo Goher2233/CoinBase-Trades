@@ -5,6 +5,7 @@ import Header from '@/components/Header';
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { formatMessage } from '@/lib/utils/formatMessage';
+import { getUserChatMessages, sendUserChatMessage, markUserChatMessagesAsRead } from '@/app/dashboard/actions';
 
 export default function ChatSupport() {
   const router = useRouter();
@@ -23,25 +24,16 @@ export default function ChatSupport() {
       if (user) {
         setUserId(user.id);
         
-        // 2. Fetch existing messages
-        supabase
-          .from('messages')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: true })
-          .then(({ data }) => {
-            if (data) setMessages(data);
+        // 2. Fetch existing messages via Server Action (bypasses RLS issues)
+        getUserChatMessages(user.id).then(res => {
+          if (res.success && res.data) {
+            setMessages(res.data);
             scrollToBottom();
-          });
+          }
+        });
           
         // 2.5 Mark unread messages from admin as read
-        supabase
-          .from('messages')
-          .update({ is_read: true })
-          .eq('user_id', user.id)
-          .neq('sender_id', user.id)
-          .eq('is_read', false)
-          .then();
+        markUserChatMessagesAsRead(user.id);
 
         // 3. Subscribe to real-time changes
         const channel = supabase
@@ -79,19 +71,15 @@ export default function ChatSupport() {
     const msg = newMessage.trim();
     setNewMessage(''); // optimistic clear
 
-    const { data, error } = await supabase.from('messages').insert({
-      user_id: userId,
-      sender_id: userId, // User sending their own message
-      content: msg,
-    }).select().single();
+    const res = await sendUserChatMessage(userId, msg);
 
-    if (error) {
-      console.error('Error sending message:', error);
+    if (!res.success) {
+      console.error('Error sending message:', res.error);
       alert('Failed to send message.');
-    } else if (data) {
+    } else if (res.data) {
       setMessages((prev) => {
-        if (prev.some(m => m.id === data.id)) return prev;
-        return [...prev, data];
+        if (prev.some(m => m.id === res.data.id)) return prev;
+        return [...prev, res.data];
       });
       scrollToBottom();
     }
@@ -158,11 +146,7 @@ export default function ChatSupport() {
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
 
       // Send image message
-      await supabase.from('messages').insert([{
-        user_id: userId,
-        sender_id: userId,
-        content: imgMessage
-      }]);
+      await sendUserChatMessage(userId, imgMessage);
 
     } catch (error) {
       console.error('Error uploading image:', error);

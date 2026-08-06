@@ -366,3 +366,90 @@ export async function deletePaymentMethod(methodId: string, userId: string) {
     return { success: false, error: error.message };
   }
 }
+
+export async function getUserChatMessages(userId: string) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('messages')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return { success: true, data: data || [] };
+  } catch (error: any) {
+    console.error("Error fetching user chat messages:", error);
+    return { success: false, data: [], error: error.message };
+  }
+}
+
+export async function sendUserChatMessage(userId: string, content: string) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('messages')
+      .insert({
+        user_id: userId,
+        sender_id: userId,
+        content: content
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (error: any) {
+    console.error("Error sending user chat message:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function markUserChatMessagesAsRead(userId: string) {
+  try {
+    const { error } = await supabaseAdmin
+      .from('messages')
+      .update({ is_read: true })
+      .eq('user_id', userId)
+      .neq('sender_id', userId)
+      .eq('is_read', false);
+
+    if (error) throw error;
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error marking messages as read:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getUnreadChatCount(userId: string) {
+  try {
+    const { count, error } = await supabaseAdmin
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .neq('sender_id', userId)
+      .eq('is_read', false);
+
+    if (error) throw error;
+    return { success: true, count: count || 0 };
+  } catch (error: any) {
+    console.error("Error getting unread chat count:", error);
+    return { success: false, count: 0, error: error.message };
+  }
+}
+
+export async function getUserStatus(userId: string) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('is_verified, is_disabled, role')
+      .eq('id', userId)
+      .single();
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (error: any) {
+    console.error("Error getting user status:", error);
+    return { success: false, data: null, error: error.message };
+  }
+}
+

@@ -11,7 +11,7 @@ import UserDrawer from '@/components/UserDrawer';
 import DepositModal from '@/components/DepositModal';
 import WithdrawModal from '@/components/WithdrawModal';
 import { createClient } from '@/lib/supabase/client';
-import { getUserBalance } from './actions';
+import { getUserBalance, getUserStatus, getUnreadChatCount } from './actions';
 
 interface TickerData {
   symbol: string;
@@ -43,8 +43,10 @@ export default function DashboardPage() {
     setIsRefreshing(true);
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user?.id) {
-      // Check if user is disabled or unverified
-      const { data: userData } = await supabase.from('users').select('is_verified, is_disabled').eq('id', session.user.id).single();
+      // Check if user is disabled or unverified via Server Action
+      const statusRes = await getUserStatus(session.user.id);
+      const userData = statusRes.data;
+
       if (userData?.is_disabled) {
         await supabase.auth.signOut();
         router.push('/login?error=disabled');
@@ -62,15 +64,11 @@ export default function DashboardPage() {
         setVipLevel(res.vipLevel || 'Bronze');
       }
       
-      // Fetch unread chat messages
-      const { count } = await supabase
-        .from('messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', session.user.id)
-        .neq('sender_id', session.user.id)
-        .eq('is_read', false);
-      
-      if (count) setUnreadChatCount(count);
+      // Fetch unread chat messages via Server Action
+      const chatCountRes = await getUnreadChatCount(session.user.id);
+      if (chatCountRes.success && chatCountRes.count) {
+        setUnreadChatCount(chatCountRes.count);
+      }
     }
     setTimeout(() => setIsRefreshing(false), 500); // Add a small delay for visual feedback
   };
