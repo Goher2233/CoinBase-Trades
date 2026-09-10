@@ -96,11 +96,50 @@ export default function AdminDashboard() {
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
+  const lastActivityRef = useRef<number>(Date.now());
+
   useEffect(() => {
     checkAdmin();
     const savedTab = localStorage.getItem('adminActiveTab');
     if (savedTab) setActiveTab(savedTab);
   }, []);
+
+  // 15 Minutes Inactivity Auto-Logout Effect
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    lastActivityRef.current = Date.now();
+
+    const handleUserActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach(event => {
+      window.addEventListener(event, handleUserActivity, { passive: true });
+    });
+
+    const INACTIVITY_TIMEOUT = 15 * 60 * 1000; // 15 minutes = 900,000 ms
+
+    const checkInactivityInterval = setInterval(async () => {
+      if (Date.now() - lastActivityRef.current >= INACTIVITY_TIMEOUT) {
+        clearInterval(checkInactivityInterval);
+        activityEvents.forEach(event => {
+          window.removeEventListener(event, handleUserActivity);
+        });
+        await supabase.auth.signOut();
+        setIsAdmin(false);
+        setLoginError('Session expired due to 15 minutes of inactivity. Please enter your real credentials to log in again.');
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(checkInactivityInterval);
+      activityEvents.forEach(event => {
+        window.removeEventListener(event, handleUserActivity);
+      });
+    };
+  }, [isAdmin, supabase.auth]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -124,11 +163,20 @@ export default function AdminDashboard() {
   const checkAdmin = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setIsLoading(false); return; }
-    const { data: userData } = await supabase.from('users').select('role').eq('id', user.id).single();
+    const { data: userData } = await supabase.from('users').select('role, is_disabled').eq('id', user.id).single();
+    if (userData?.is_disabled) {
+      await supabase.auth.signOut();
+      setIsAdmin(false);
+      setLoginError('Account disabled. Please contact support.');
+      setIsLoading(false);
+      return;
+    }
     if (userData?.role === 'superadmin') {
       setIsAdmin(true);
       fetchAllData();
     } else {
+      await supabase.auth.signOut();
+      setIsAdmin(false);
       router.push('/dashboard');
     }
     setIsLoading(false);
@@ -140,21 +188,46 @@ export default function AdminDashboard() {
     setIsLoggingIn(true);
     
     try {
+      const email = loginEmail.trim();
+      const password = loginPassword;
+
+      if (!email || !password) {
+        throw new Error('Please enter both email and password.');
+      }
+
+      // Verify real credentials against database via Supabase Auth every time
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
+        email,
+        password,
       });
       
       if (error) throw error;
       
       if (data.user) {
-        const { data: userData } = await supabase.from('users').select('role').eq('id', data.user.id).single();
-        if (userData?.role === 'superadmin') {
+        // Query database to verify role & status every single attempt
+        const { data: userData, error: dbError } = await supabase
+          .from('users')
+          .select('role, is_disabled')
+          .eq('id', data.user.id)
+          .single();
+
+        if (dbError || !userData) {
+          await supabase.auth.signOut();
+          throw new Error('User record not found in database.');
+        }
+
+        if (userData.is_disabled) {
+          await supabase.auth.signOut();
+          throw new Error('Account disabled. Contact administrator.');
+        }
+
+        if (userData.role === 'superadmin') {
           setIsAdmin(true);
+          setLoginPassword(''); // Clear password for security
           fetchAllData();
         } else {
           await supabase.auth.signOut();
-          setLoginError('Unauthorized: Super Admin access required');
+          throw new Error('Unauthorized: Super Admin access required');
         }
       }
     } catch (err: any) {
@@ -206,7 +279,12 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/'); };
+  const handleLogout = async () => { 
+    await supabase.auth.signOut(); 
+    setIsAdmin(false);
+    setLoginError('');
+    router.push('/'); 
+  };
 
   const handleChangeAdminPassword = async (e: React.FormEvent) => {
     e.preventDefault();
