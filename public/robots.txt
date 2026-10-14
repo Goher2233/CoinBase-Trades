@@ -1,3 +1,0 @@
-# Disallow all search engines, crawlers, and AI bots from indexing any page on Coinflow VIP
-User-agent: *
-Disallow: /
